@@ -1,3 +1,10 @@
+import os
+# Load environment variables from .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from typing import Optional
 import datetime
 import typer
