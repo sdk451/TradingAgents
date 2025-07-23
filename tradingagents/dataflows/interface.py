@@ -14,6 +14,8 @@ from tqdm import tqdm
 import yfinance as yf
 from openai import OpenAI
 from .config import get_config, set_config, DATA_DIR
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 
 
 def get_finnhub_news(
@@ -704,104 +706,207 @@ def get_YFin_data(
 
 def get_stock_news_openai(ticker, curr_date):
     config = get_config()
-    client = OpenAI(base_url=config["backend_url"])
+    provider = config["llm_provider"].lower()
+    if provider == "openai":
+        client = OpenAI(base_url=config["backend_url"])
+        response = client.responses.create(
+            model=config["quick_think_llm"],
+            input=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Can you search Social Media for {ticker} from 7 days before {curr_date} to {curr_date}? Make sure you only get the data posted during that period.",
+                        }
+                    ],
+                }
+            ],
+            text={"format": {"type": "text"}},
+            reasoning={},
+            tools=[
+                {
+                    "type": "web_search_preview",
+                    "user_location": {"type": "approximate"},
+                    "search_context_size": "low",
+                }
+            ],
+            temperature=1,
+            max_output_tokens=4096,
+            top_p=1,
+            store=True,
+        )
+        return response.output[1].content[0].text
+    else:
+        # Use Finnhub and Google News/Reddit for real news/social data
+        news = get_finnhub_news(ticker, curr_date, 7)
+        reddit = get_reddit_company_news(ticker, curr_date, 7, 5)
+        google_news = get_google_news(ticker, curr_date, 7)
+        context = f"""
+# Finnhub News
+{news}
 
-    response = client.responses.create(
-        model=config["quick_think_llm"],
-        input=[
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": f"Can you search Social Media for {ticker} from 7 days before {curr_date} to {curr_date}? Make sure you only get the data posted during that period.",
-                    }
-                ],
-            }
-        ],
-        text={"format": {"type": "text"}},
-        reasoning={},
-        tools=[
-            {
-                "type": "web_search_preview",
-                "user_location": {"type": "approximate"},
-                "search_context_size": "low",
-            }
-        ],
-        temperature=1,
-        max_output_tokens=4096,
-        top_p=1,
-        store=True,
-    )
+# Reddit News
+{reddit}
 
-    return response.output[1].content[0].text
-
+# Google News
+{google_news}
+"""
+        prompt = (
+            f"Given the following real company news and social data for {ticker} as of {curr_date}, "
+            "write a detailed news and sentiment analysis. Summarize key events, sentiment, and any trends that would affect trading. "
+            "Present the information in a markdown table at the end.\n\n"
+            f"{context}"
+        )
+        if provider == "google":
+            google_api_key = os.getenv("GOOGLE_API_KEY")
+            llm = ChatGoogleGenerativeAI(model=config["quick_think_llm"], google_api_key=google_api_key)
+            result = llm.invoke(prompt)
+            return result.content
+        elif provider == "anthropic":
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            llm = ChatAnthropic(model_name=config["quick_think_llm"], api_key=anthropic_api_key)
+            result = llm.invoke(prompt)
+            return result.content
+        else:
+            return "Stock news retrieval is not supported for this LLM provider."
 
 def get_global_news_openai(curr_date):
     config = get_config()
-    client = OpenAI(base_url=config["backend_url"])
+    provider = config["llm_provider"].lower()
+    if provider == "openai":
+        client = OpenAI(base_url=config["backend_url"])
+        response = client.responses.create(
+            model=config["quick_think_llm"],
+            input=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Can you search global or macroeconomics news from 7 days before {curr_date} to {curr_date} that would be informative for trading purposes? Make sure you only get the data posted during that period.",
+                        }
+                    ],
+                }
+            ],
+            text={"format": {"type": "text"}},
+            reasoning={},
+            tools=[
+                {
+                    "type": "web_search_preview",
+                    "user_location": {"type": "approximate"},
+                    "search_context_size": "low",
+                }
+            ],
+            temperature=1,
+            max_output_tokens=4096,
+            top_p=1,
+            store=True,
+        )
+        return response.output[1].content[0].text
+    else:
+        reddit = get_reddit_global_news(curr_date, 7, 5)
+        google_news = get_google_news("global macroeconomics", curr_date, 7)
+        context = f"""
+# Reddit Global News
+{reddit}
 
-    response = client.responses.create(
-        model=config["quick_think_llm"],
-        input=[
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": f"Can you search global or macroeconomics news from 7 days before {curr_date} to {curr_date} that would be informative for trading purposes? Make sure you only get the data posted during that period.",
-                    }
-                ],
-            }
-        ],
-        text={"format": {"type": "text"}},
-        reasoning={},
-        tools=[
-            {
-                "type": "web_search_preview",
-                "user_location": {"type": "approximate"},
-                "search_context_size": "low",
-            }
-        ],
-        temperature=1,
-        max_output_tokens=4096,
-        top_p=1,
-        store=True,
-    )
-
-    return response.output[1].content[0].text
-
+# Google News
+{google_news}
+"""
+        prompt = (
+            f"Given the following real global and macroeconomic news as of {curr_date}, "
+            "write a detailed macroeconomic news analysis. Summarize key events, sentiment, and any trends that would affect trading. "
+            "Present the information in a markdown table at the end.\n\n"
+            f"{context}"
+        )
+        if provider == "google":
+            google_api_key = os.getenv("GOOGLE_API_KEY")
+            llm = ChatGoogleGenerativeAI(model=config["quick_think_llm"], google_api_key=google_api_key)
+            result = llm.invoke(prompt)
+            return result.content
+        elif provider == "anthropic":
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            llm = ChatAnthropic(model_name=config["quick_think_llm"], api_key=anthropic_api_key)
+            result = llm.invoke(prompt)
+            return result.content
+        else:
+            return "Global news retrieval is not supported for this LLM provider."
 
 def get_fundamentals_openai(ticker, curr_date):
     config = get_config()
-    client = OpenAI(base_url=config["backend_url"])
+    provider = config["llm_provider"].lower()
+    if provider == "openai":
+        client = OpenAI(base_url=config["backend_url"])
+        response = client.responses.create(
+            model=config["quick_think_llm"],
+            input=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Can you search Fundamental for discussions on {ticker} during of the month before {curr_date} to the month of {curr_date}. Make sure you only get the data posted during that period. List as a table, with PE/PS/Cash flow/ etc",
+                        }
+                    ],
+                }
+            ],
+            text={"format": {"type": "text"}},
+            reasoning={},
+            tools=[
+                {
+                    "type": "web_search_preview",
+                    "user_location": {"type": "approximate"},
+                    "search_context_size": "low",
+                }
+            ],
+            temperature=1,
+            max_output_tokens=4096,
+            top_p=1,
+            store=True,
+        )
+        return response.output[1].content[0].text
+    else:
+        # Fetch fundamentals from Yahoo Finance
+        import yfinance as yf
+        ticker_obj = yf.Ticker(ticker)
+        info = ticker_obj.info
+        financials = ticker_obj.financials
+        balance_sheet = ticker_obj.balance_sheet
+        cashflow = ticker_obj.cashflow
+        # Compose a context string
+        context = f"""
+# Company Info
+Name: {info.get('shortName', 'N/A')}
+Industry: {info.get('industry', 'N/A')}
+Sector: {info.get('sector', 'N/A')}
+Country: {info.get('country', 'N/A')}
+Website: {info.get('website', 'N/A')}
 
-    response = client.responses.create(
-        model=config["quick_think_llm"],
-        input=[
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": f"Can you search Fundamental for discussions on {ticker} during of the month before {curr_date} to the month of {curr_date}. Make sure you only get the data posted during that period. List as a table, with PE/PS/Cash flow/ etc",
-                    }
-                ],
-            }
-        ],
-        text={"format": {"type": "text"}},
-        reasoning={},
-        tools=[
-            {
-                "type": "web_search_preview",
-                "user_location": {"type": "approximate"},
-                "search_context_size": "low",
-            }
-        ],
-        temperature=1,
-        max_output_tokens=4096,
-        top_p=1,
-        store=True,
-    )
+# Financials (last available)
+{financials.to_string() if not financials.empty else 'N/A'}
 
-    return response.output[1].content[0].text
+# Balance Sheet (last available)
+{balance_sheet.to_string() if not balance_sheet.empty else 'N/A'}
+
+# Cash Flow (last available)
+{cashflow.to_string() if not cashflow.empty else 'N/A'}
+"""
+        prompt = (
+            f"Given the following real company data for {ticker} as of {curr_date}, "
+            "write a detailed fundamental analysis. Include company profile, financials, PE/PS/Cash flow, and any recent news or events that would affect fundamentals. "
+            "Present the information in a markdown table at the end.\n\n"
+            f"{context}"
+        )
+        if provider == "google":
+            google_api_key = os.getenv("GOOGLE_API_KEY")
+            llm = ChatGoogleGenerativeAI(model=config["quick_think_llm"], google_api_key=google_api_key)
+            result = llm.invoke(prompt)
+            return result.content
+        elif provider == "anthropic":
+            anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            llm = ChatAnthropic(model_name=config["quick_think_llm"], api_key=anthropic_api_key)
+            result = llm.invoke(prompt)
+            return result.content
+        else:
+            return "Fundamental data retrieval is not supported for this LLM provider."

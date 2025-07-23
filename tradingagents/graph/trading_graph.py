@@ -65,8 +65,9 @@ class TradingAgentsGraph:
             self.deep_thinking_llm = ChatAnthropic(model_name=self.config["deep_think_llm"], base_url=self.config["backend_url"], timeout=120, stop=None)
             self.quick_thinking_llm = ChatAnthropic(model_name=self.config["quick_think_llm"], base_url=self.config["backend_url"], timeout=120, stop=None)
         elif self.config["llm_provider"].lower() == "google":
-            self.deep_thinking_llm = ChatGoogleGenerativeAI(model=self.config["deep_think_llm"])
-            self.quick_thinking_llm = ChatGoogleGenerativeAI(model=self.config["quick_think_llm"])
+            google_api_key = os.getenv("GOOGLE_API_KEY")
+            self.deep_thinking_llm = ChatGoogleGenerativeAI(model=self.config["deep_think_llm"], google_api_key=google_api_key)
+            self.quick_thinking_llm = ChatGoogleGenerativeAI(model=self.config["quick_think_llm"], google_api_key=google_api_key)
         else:
             raise ValueError(f"Unsupported LLM provider: {self.config['llm_provider']}")
         
