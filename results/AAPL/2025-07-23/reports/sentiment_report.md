@@ -1,0 +1,3 @@
+I encountered an error when trying to retrieve news for AAPL using the available tool. It seems there's a "NotFoundError" with code 404. This could indicate that no news was found for AAPL on the specified date (2025-07-23) or that there's an issue with the API's data source.
+
+Since I can't access social media sentiment or news articles with the available tools, I'm unable to provide the detailed report you requested. I would need access to those data sources to complete the analysis.

@@ -6,6 +6,9 @@ import asyncio
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from sentence_transformers import SentenceTransformer
 
+# Maximum payload size for Google embeddings (36KB limit, use 30KB to be safe)
+MAX_EMBEDDING_PAYLOAD_SIZE = 30000
+
 
 class FinancialSituationMemory:
     def __init__(self, name, config):
@@ -34,14 +37,111 @@ class FinancialSituationMemory:
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         self.situation_collection = self.chroma_client.create_collection(name=name)
 
+    def _truncate_for_embedding(self, text: str, max_size: int = MAX_EMBEDDING_PAYLOAD_SIZE) -> str:
+        """
+        Intelligently truncate text for embedding while preserving semantic meaning.
+        For concatenated reports, preserves structure by keeping portions of each section.
+        
+        Args:
+            text: Text to truncate
+            max_size: Maximum size in bytes
+            
+        Returns:
+            Truncated text that preserves key information
+        """
+        # Convert to bytes to check size
+        text_bytes = text.encode('utf-8')
+        
+        if len(text_bytes) <= max_size:
+            return text
+        
+        # Strategy: For concatenated reports (separated by \n\n), preserve structure
+        # by keeping the beginning and end of each section
+        sections = text.split('\n\n')
+        
+        if len(sections) > 1:
+            # Multiple sections (likely concatenated reports)
+            # Keep first part of each section and last part of last section
+            truncated_sections = []
+            section_budget = max_size // len(sections)
+            
+            for i, section in enumerate(sections):
+                section_bytes = section.encode('utf-8')
+                if len(section_bytes) <= section_budget:
+                    truncated_sections.append(section)
+                else:
+                    # Keep beginning (summary) and end (conclusion) of section
+                    # Use 60% for beginning, 40% for end
+                    begin_size = int(section_budget * 0.6)
+                    end_size = section_budget - begin_size
+                    
+                    begin_bytes = section_bytes[:begin_size]
+                    end_bytes = section_bytes[-end_size:] if end_size > 0 else b''
+                    
+                    try:
+                        begin = begin_bytes.decode('utf-8')
+                        end = end_bytes.decode('utf-8') if end_bytes else ''
+                    except UnicodeDecodeError:
+                        begin = begin_bytes.decode('utf-8', errors='ignore')
+                        end = end_bytes.decode('utf-8', errors='ignore') if end_bytes else ''
+                    
+                    if end:
+                        truncated_sections.append(f"{begin}\n[... truncated ...]\n{end}")
+                    else:
+                        truncated_sections.append(f"{begin}\n[... truncated ...]")
+            
+            result = '\n\n'.join(truncated_sections)
+            # Final check - if still too large, fall back to simple truncation
+            if len(result.encode('utf-8')) > max_size:
+                return self._simple_truncate(text, max_size)
+            return result
+        else:
+            # Single section - use simple truncation with beginning and end
+            return self._simple_truncate(text, max_size)
+    
+    def _simple_truncate(self, text: str, max_size: int) -> str:
+        """
+        Simple truncation keeping beginning and end of text.
+        
+        Args:
+            text: Text to truncate
+            max_size: Maximum size in bytes
+            
+        Returns:
+            Truncated text
+        """
+        text_bytes = text.encode('utf-8')
+        if len(text_bytes) <= max_size:
+            return text
+        
+        # Keep 60% for beginning, 40% for end
+        begin_size = int(max_size * 0.6)
+        end_size = max_size - begin_size
+        
+        begin_bytes = text_bytes[:begin_size]
+        end_bytes = text_bytes[-end_size:] if end_size > 0 else b''
+        
+        try:
+            begin = begin_bytes.decode('utf-8')
+            end = end_bytes.decode('utf-8') if end_bytes else ''
+        except UnicodeDecodeError:
+            begin = begin_bytes.decode('utf-8', errors='ignore')
+            end = end_bytes.decode('utf-8', errors='ignore') if end_bytes else ''
+        
+        if end:
+            return f"{begin}\n\n[... content truncated ...]\n\n{end}"
+        return f"{begin}\n\n[... content truncated ...]"
+
     def get_embedding(self, text):
-        if self.provider == "openai":
+        # Truncate text for Google provider to avoid payload size errors
+        if self.provider == "google":
+            text = self._truncate_for_embedding(text)
+            return self.embedding_model.embed_query(text)
+        elif self.provider == "openai":
             response = self.client.embeddings.create(
                 model=self.embedding, input=text
             )
             return response.data[0].embedding
-        elif self.provider == "google":
-            return self.embedding_model.embed_query(text)
         elif self.provider == "anthropic":
             raise NotImplementedError("Memory features are currently not supported for Anthropic provider. Please use OpenAI or Google for memory-enabled workflows.")
         else:
