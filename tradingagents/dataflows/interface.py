@@ -310,6 +310,39 @@ def get_google_news(
     return f"## {query} Google News, from {before} to {curr_date}:\n\n{news_str}"
 
 
+def get_news(
+    ticker: Annotated[str, "Ticker symbol of the company"],
+    start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
+    end_date: Annotated[str, "End date in yyyy-mm-dd format"],
+    vendor: Annotated[str, "News vendor to use: 'finnhub' or 'google'"] = "finnhub",
+) -> str:
+    """
+    Retrieve news about a company within a date range from the specified vendor.
+    
+    Args:
+        ticker (str): Ticker symbol of the company
+        start_date (str): Start date in yyyy-mm-dd format
+        end_date (str): End date in yyyy-mm-dd format
+        vendor (str): News vendor to use: 'finnhub' or 'google' (default: 'finnhub')
+    
+    Returns:
+        str: A formatted string containing news about the company within the date range
+    """
+    # Calculate look_back_days from start_date and end_date
+    start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+    end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
+    look_back_days = (end_date_obj - start_date_obj).days
+    
+    if vendor.lower() == "google":
+        # get_google_news expects: (query, curr_date, look_back_days)
+        return get_google_news(ticker, end_date, look_back_days)
+    elif vendor.lower() == "finnhub":
+        # get_finnhub_news expects: (ticker, curr_date, look_back_days)
+        return get_finnhub_news(ticker, end_date, look_back_days)
+    else:
+        raise ValueError(f"Unsupported vendor: {vendor}. Supported vendors are 'finnhub' and 'google'.")
+
+
 def get_reddit_global_news(
     start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
     look_back_days: Annotated[int, "how many days to look back"],
